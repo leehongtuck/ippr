@@ -40,8 +40,8 @@ int main() {
 		if (frame.empty())
 			break;
 
-		classifyImage(frame);
-		//compute(frame);
+		//classifyImage(frame);
+		compute(frame);
 
 		char c = (char)waitKey(10);
 		if (c == 27)
@@ -59,38 +59,31 @@ void compute(Mat frame) {
 	Mat toProcess = (frame.clone())(roi);
 	cvtColor(toProcess, toProcess, COLOR_RGB2GRAY);
 	equalizeHist(toProcess, toProcess);
-
 	medianBlur(toProcess, toProcess, 3);
 
 	Ptr<StaticSaliencySpectralResidual> salSR = StaticSaliencySpectralResidual::create();
-	Ptr<StaticSaliencyFineGrained> salFG = StaticSaliencyFineGrained::create();
+	//Ptr<StaticSaliencyFineGrained> salFG = StaticSaliencyFineGrained::create();
 	Mat mapSR, mapFG;
 	salSR->computeSaliency(toProcess, mapSR);
-	salFG->computeSaliency(toProcess, mapFG);
+	//salFG->computeSaliency(toProcess, mapFG);
 	mapSR.convertTo(mapSR, CV_8U, 255);
-	mapFG.convertTo(mapFG, CV_8U, 255);
+	//mapFG.convertTo(mapFG, CV_8U, 255);
 
 	cvtColor(mapSR, mapSR, COLOR_GRAY2BGR);
-	cvtColor(mapFG, mapFG, COLOR_GRAY2BGR);
-	Mat added;
-	addWeighted(mapSR, 0.7, mapFG, 0.3, 0.0, added);
+	//cvtColor(mapFG, mapFG, COLOR_GRAY2BGR);
+	//Mat added;
+	//addWeighted(mapSR, 0.7, mapFG, 0.3, 0.0, added);
 
 	Mat kMeansMap = KMeans(mapSR, 3);
 	//imshow("kmeans", kMeansMap);
 	std::vector<Mat> croppedImages = segment(kMeansMap, frame(roi));
-	imshow("frame", frame);
 	//std::vector<Mat> croppedVehicles;
 
 	//for (Mat img : croppedImages) {
-	//	if (img.cols < frame.cols * 0.15) {
-	//		imshow("img", img);
-	//		croppedVehicles.push_back(img);
-	//	}
-	//	else {
-	//		segmentVehicles(img, croppedVehicles);
-	//	}
-	//	waitKey();
+	//	classifyImage(img);
 	//}
+
+	imshow("processed", frame);
 }
 
 Mat KMeans(Mat src, int clusterCount) {
@@ -161,7 +154,7 @@ Mat processSobel(Mat img) {
 	return abs_grad_y;
 }
 
-std::vector<Mat> segment(Mat src, Mat rgb) {
+std::vector<Mat> segment(Mat src, Mat ori) {
 
 	std::vector<std::vector<Point>> contours;
 	std::vector<Vec4i> hierarchy;
@@ -187,7 +180,6 @@ std::vector<Mat> segment(Mat src, Mat rgb) {
 	findContours(src, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE);
 	Mat drawing = Mat::zeros(src.size(), CV_8UC3);
 	// Original image clone
-	Mat ori = rgb.clone();
 	RNG rng(12345);
 
 	for (size_t i = 0; i < contours.size(); i++)
@@ -200,14 +192,13 @@ std::vector<Mat> segment(Mat src, Mat rgb) {
 			continue;
 		}
 
-		if (r.width > ori.cols * 0.4) {
-			findVehicles(rgb(r));
-		}
-		else {
-			rectangle(rgb, r, color);
-		}
-
-		//croppedImg.push_back(ori(r));
+		//if (r.width > ori.cols * 0.4) {
+		//	findVehicles(rgb(r));
+		//}
+		//else {
+		//	rectangle(rgb, r, color);
+		//}
+		croppedImg.push_back(ori(r));
 		//drawContours(drawing, contours, (int)i, color, 2, LINE_8, hierarchy, 0);
 	}
 	//imshow("Contours", drawing);
@@ -312,18 +303,12 @@ void classifyImage(Mat frame) {
 	// Remove the bounding boxes with low confidence
 	postprocess(frame, outs);
 
-	// Put efficiency information. The function getPerfProfile returns the 
-	// overall time for inference(t) and the timings for each of the layers(in layersTimes)
-	std::vector<double> layersTimes;
-	double freq = getTickFrequency() / 1000;
-	double t = net.getPerfProfile(layersTimes) / freq;
-	std::string label = format("Inference time for a frame : %.2f ms", t);
-	putText(frame, label, Point(0, 15), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 0, 255));
 
 	// Write the frame with the detection boxes
-	Mat detectedFrame;
-	frame.convertTo(detectedFrame, CV_8U);
-	imshow("obj detection", detectedFrame);
+	//imshow("ori frame", frame);
+	//Mat detectedFrame;
+	//frame.convertTo(detectedFrame, CV_8U);
+	//imshow("obj detection", detectedFrame);
 	//imwrite(outputFile, detectedFrame);
 }
 
