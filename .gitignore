@@ -12,7 +12,8 @@
 *.user
 *.userosscache
 *.sln.docstates
-/IPPR/vid.mp4
+*.mp4
+*.rar
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs
