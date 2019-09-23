@@ -16,10 +16,8 @@ using namespace saliency;
 
 void compute(Mat frame);
 std::vector<Mat> segment(Mat src, Mat rgb);
-Mat processSobel(Mat img);
 Mat KMeans(Mat src, int clusterCount);
 void findContours(Mat, Mat);
-void findVehicles(Mat);
 
 //dnn functions
 void classifyImage(Mat frame);
@@ -27,63 +25,54 @@ std::vector<String> getOutputsNames(const Net& net);
 void postprocess(Mat& frame, const std::vector<Mat>& outs);
 void drawPred(int classId, float conf, int left, int top, int right, int bottom, Mat& frame);
 
+
 int main() {
 	VideoCapture cap("./ippr.mp4");
-	std::cout << "is opened: " << cap.isOpened() << std::endl;
+	int frame_width = cap.get(CAP_PROP_FRAME_WIDTH);
+	int frame_height = cap.get(CAP_PROP_FRAME_HEIGHT);
+	int fps = cap.get(CAP_PROP_FPS) / 5;
+	std::cout << "fps is: " << fps << std::endl;
+	VideoWriter video("output.mp4", VideoWriter::fourcc('X', 'V', 'I', 'D'), fps, Size(frame_width, frame_height));
 
 	while (true)
 	{
 		Mat frame;
-		for (int i = 0; i < 10; i++)
+		//Skip 10 frames
+		for (int i = 0; i < 5; i++)
 			cap >> frame;
 
 		if (frame.empty())
 			break;
 
-		//classifyImage(frame);
 		compute(frame);
-
+		video.write(frame);
+		imshow("frame", frame);
 		char c = (char)waitKey(10);
 		if (c == 27)
 			break;
-
-		//waitKey();
-		//break;
 	}
 	cap.release();
+	video.release();
 	destroyAllWindows();
 }
 
 void compute(Mat frame) {
-	Rect roi(0, frame.rows * 0.4, frame.cols, frame.rows * 0.5);
-	Mat toProcess = (frame.clone())(roi);
-	cvtColor(toProcess, toProcess, COLOR_RGB2GRAY);
-	equalizeHist(toProcess, toProcess);
+	Mat toProcess = frame.clone();
 	medianBlur(toProcess, toProcess, 3);
 
-	Ptr<StaticSaliencySpectralResidual> salSR = StaticSaliencySpectralResidual::create();
-	//Ptr<StaticSaliencyFineGrained> salFG = StaticSaliencyFineGrained::create();
+	Ptr<StaticSaliencyFineGrained> salFG = StaticSaliencyFineGrained::create();
 	Mat mapSR, mapFG;
-	salSR->computeSaliency(toProcess, mapSR);
-	//salFG->computeSaliency(toProcess, mapFG);
-	mapSR.convertTo(mapSR, CV_8U, 255);
-	//mapFG.convertTo(mapFG, CV_8U, 255);
 
-	cvtColor(mapSR, mapSR, COLOR_GRAY2BGR);
-	//cvtColor(mapFG, mapFG, COLOR_GRAY2BGR);
-	//Mat added;
-	//addWeighted(mapSR, 0.7, mapFG, 0.3, 0.0, added);
+	salFG->computeSaliency(toProcess, mapFG);
+	mapFG.convertTo(mapFG, CV_8U, 255);
 
-	Mat kMeansMap = KMeans(mapSR, 3);
-	//imshow("kmeans", kMeansMap);
-	std::vector<Mat> croppedImages = segment(kMeansMap, frame(roi));
-	//std::vector<Mat> croppedVehicles;
+	cvtColor(mapFG, mapFG, COLOR_GRAY2BGR);
+	std::vector<Mat> croppedImages = segment(KMeans(mapFG, 3), frame);
 
-	//for (Mat img : croppedImages) {
-	//	classifyImage(img);
-	//}
+	for (Mat img : croppedImages) {
+		classifyImage(img);
+	}
 
-	imshow("processed", frame);
 }
 
 Mat KMeans(Mat src, int clusterCount) {
@@ -118,9 +107,6 @@ Mat KMeans(Mat src, int clusterCount) {
 		{
 
 			int cluster_idx = labels.at<int>(y + x * src.rows, 0);
-			//dst.at<Vec3b>(y, x)[0] = centers.at<float>(cluster_idx, 0);
-			//dst.at<Vec3b>(y, x)[1] = centers.at<float>(cluster_idx, 1);
-			//dst.at<Vec3b>(y, x)[2] = centers.at<float>(cluster_idx, 2);
 			if (cluster_idx == pointVal[0]) {
 				dst.at<Vec3b>(y, x)[0] = centers.at<float>(cluster_idx, 0);
 				dst.at<Vec3b>(y, x)[1] = centers.at<float>(cluster_idx, 1);
@@ -132,50 +118,26 @@ Mat KMeans(Mat src, int clusterCount) {
 	return dst;
 }
 
-Mat processSobel(Mat img) {
-	Mat src_gray;
-	Mat grad;
-	int ksize = 1;
-	int scale = 1;
-	int delta = 0;
-	int ddepth = CV_16S;
-
-	GaussianBlur(img, src_gray, Size(7, 7), 0, 0, BORDER_DEFAULT);
-
-	Mat grad_x, grad_y;
-	Mat abs_grad_x, abs_grad_y;
-	//Sobel(src_gray, grad_x, ddepth, 1, 0, ksize, scale, delta, BORDER_DEFAULT);
-	Sobel(src_gray, grad_y, ddepth, 0, 1, ksize, scale, delta, BORDER_DEFAULT);
-	//convertScaleAbs(grad_x, abs_grad_x);
-	convertScaleAbs(grad_y, abs_grad_y);
-	//addWeighted(abs_grad_x, 0.5, abs_grad_y, 0.5, 0, grad);
-	abs_grad_y.convertTo(grad, CV_8U);
-
-	return abs_grad_y;
-}
-
 std::vector<Mat> segment(Mat src, Mat ori) {
-
 	std::vector<std::vector<Point>> contours;
 	std::vector<Vec4i> hierarchy;
 	std::vector<Mat> croppedImg;
 
 	threshold(src, src, 0, 255, THRESH_BINARY | THRESH_OTSU);
-	//
-	int dilation_size = 3;
-	dilate(src, src,
+
+	int erosion_size = 5;
+	erode(src, src,
 		getStructuringElement(MORPH_RECT,
-			Size(dilation_size * 2 + 1, dilation_size * 2 + 1),
-			Point(dilation_size))
+			Size(erosion_size * 2 + 1, 1),
+			Point(erosion_size, 0))
 	);
 
-	//int erosion_size = 1;
-	//erode(src, src,
-	//	getStructuringElement(MORPH_CROSS,
-	//		Size(erosion_size * 2 + 1, erosion_size * 2 + 1),
-	//		Point(erosion_size))
-	//);
-	imshow("closing", src);
+	int dilation_size = 10;
+	dilate(src, src,
+		getStructuringElement(MORPH_RECT,
+			Size(1, dilation_size * 2 + 1),
+			Point(0, dilation_size))
+	);
 
 	findContours(src, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE);
 	Mat drawing = Mat::zeros(src.size(), CV_8UC3);
@@ -186,75 +148,17 @@ std::vector<Mat> segment(Mat src, Mat ori) {
 	{
 		Scalar color = Scalar(rng.uniform(0, 256), rng.uniform(0, 256), rng.uniform(0, 256));
 		Rect r = boundingRect(contours.at(i));
-		//std::cout << "width: " << r.width << " height: " << r.height << "\n";
+		double ratio = r.width / r.height;
 
-		if (r.width < ori.cols * 0.05 || r.height < ori.rows * 0.1) {
+		if (r.width < ori.cols * 0.05 || r.height < ori.rows * 0.1 || r.y < ori.rows * 0.25 || (r.x < ori.cols * 0.3) || ratio > 3.0) {
 			continue;
 		}
 
-		//if (r.width > ori.cols * 0.4) {
-		//	findVehicles(rgb(r));
-		//}
-		//else {
-		//	rectangle(rgb, r, color);
-		//}
 		croppedImg.push_back(ori(r));
-		//drawContours(drawing, contours, (int)i, color, 2, LINE_8, hierarchy, 0);
 	}
-	//imshow("Contours", drawing);
 	return croppedImg;
 }
 
-void findVehicles(Mat src) {
-	Mat process = src.clone();
-	cvtColor(process, process, COLOR_BGR2GRAY);
-
-	equalizeHist(process, process);
-	medianBlur(process, process, 5);
-	Canny(process, process, mean(process)[0] * 0.66, mean(process)[0] * 1.33);
-
-	//int erosion_size = 1;
-	//erode(process, process,
-	//	getStructuringElement(MORPH_ELLIPSE,
-	//		Size(erosion_size * 2 + 1, 1),
-	//		Point(erosion_size, 0))
-	//);
-
-	int dilation_size = 10;
-	dilate(process, process,
-		getStructuringElement(MORPH_ELLIPSE,
-			Size(3, dilation_size * 2 + 1),
-			Point(1, dilation_size))
-	);
-
-	imshow("canny", process);
-	//threshold(process, process, 0, 255, THRESH_BINARY | THRESH_OTSU);
-
-	std::vector<std::vector<Point>> contours;
-	std::vector<Vec4i> hierarchy;
-
-	findContours(process, contours, hierarchy, RETR_TREE, CHAIN_APPROX_SIMPLE);
-	Mat drawing = Mat::zeros(process.size(), CV_8UC3);
-	// Original image clone
-	RNG rng(12345);
-
-	for (size_t i = 0; i < contours.size(); i++)
-	{
-		Scalar color = Scalar(rng.uniform(0, 256), rng.uniform(0, 256), rng.uniform(0, 256));
-		Rect r = boundingRect(contours.at(i));
-		//std::cout << "width: " << r.width << " height: " << r.height << "\n";
-		double areaRatio = contourArea(contours[i]) / r.area();
-
-		if (r.width > process.cols * 0.3 || r.height < process.rows * 0.45) {
-			continue;
-		}
-
-		rectangle(src, r, color, 5);
-		//drawContours(drawing, contours, (int)i, color, 2, LINE_8, hierarchy, 0);
-	}
-
-	//imshow("contours", drawing);
-}
 
 //dnn variables
 std::vector<std::string> classes;
